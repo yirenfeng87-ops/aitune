@@ -58,14 +58,6 @@ const TONES = [
   { value: "说服型", label: "说服型" },
 ];
 
-const ROLES = [
-  { value: "资深写作助手", label: "资深写作助手" },
-  { value: "资深文案", label: "资深文案" },
-  { value: "产品经理", label: "产品经理" },
-  { value: "学术编辑", label: "学术编辑" },
-  { value: "营销专家", label: "营销专家" },
-];
-
 export function WritingForm({
   output,
   setOutput,
@@ -171,7 +163,7 @@ export function WritingForm({
       description: "",
       language: formData.language, // Keep preferences
       tone: formData.tone,
-      role: formData.role,
+      role: formData.role || "资深写作助手", // Reset to default if empty
     });
     setOutput("");
     setError(null);
@@ -300,25 +292,21 @@ export function WritingForm({
                 </div>
 
                 {/* Role */}
-                <div className="space-y-2">
+<div className="space-y-2">
                   <Label htmlFor="role">角色设定</Label>
-                  <Select
+                  <Input
+                    id="role"
+                    placeholder="例：资深文案、产品经理、营销专家"
                     value={formData.role}
-                    onValueChange={(value) =>
-                      setFormData({ ...formData, role: value })
+                    onChange={(e) =>
+                      setFormData({ ...formData, role: e.target.value })
                     }
-                  >
-                    <SelectTrigger id="role">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {ROLES.map((role) => (
-                        <SelectItem key={role.value} value={role.value}>
-                          {role.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    maxLength={20}
+                    className="max-w-xs"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    自定义 AI 的角色身份
+                  </p>
                 </div>
               </AccordionContent>
             </AccordionItem>

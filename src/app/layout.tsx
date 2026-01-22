@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "AI 写作助手 Demo",
-  description: "基于 OpenRouter 的 AI 写作助手演示应用",
+  title: "AI 写作助手",
+  description: "基于 OpenRouter 的 AI 写作助手应用",
 };
 
 export default function RootLayout({
