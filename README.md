@@ -1,36 +1,250 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# AI 写作助手（MVP）PRD
 
-## Getting Started
+> 技术栈：Next.js / React / TailwindCSS / shadcn/ui
+> 模型调用：OpenRouter（支持 deepseek 与 kimi 免费模型）
 
-First, run the development server:
+---
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+## 1. 项目概述
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### 1.1 产品名称
+AI 写作助手（MVP）
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### 1.2 背景与问题
+用户希望在一个简单页面里输入主题信息与偏好设置，选择不同大模型（通过 OpenRouter），生成可复制的写作内容，用于演示或快速验证产品方向。
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### 1.3 目标
+- 最短路径跑通：**输入 → 设置 → 调用模型 → 输出结果**
+- 支持多模型切换：
+  - `deepseek/deepseek-r1-0528:free`
+  - `moonshotai/kimi-k2:free`
+- 支持高级偏好：语言、语气、角色
+- Demo 级可用性：加载态、错误提示、复制结果、基础日志
 
-## Learn More
+### 1.4 非目标（MVP 不做）
+- 登录/账号体系、历史记录、多文档管理
+- 流式输出（可作为下一期）
+- 多轮对话、引用资料、联网搜索、图片/文件上传
+- 模板市场、提示词可视化编辑器
 
-To learn more about Next.js, take a look at the following resources:
+---
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## 2. 用户与使用场景
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### 2.1 目标用户
+- 内部团队（产品/研发/运营）演示与验证
+- 开发者用于快速集成 OpenRouter
 
-## Deploy on Vercel
+### 2.2 核心场景
+1. 用户选择模型 → 填写主题关键词与描述 → 设置语言/语气/角色 → 点击生成 → 得到结构化内容（大纲/正文等）
+2. 用户更换模型或语气 → 再次生成 → 对比结果差异
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+---
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## 3. 产品范围（MVP）
+
+### 3.1 页面结构（单页）
+- 顶部：标题 + 简短说明
+- 输入表单区（左侧/上方）
+- 输出结果区（右侧/下方）
+
+### 3.2 表单字段
+
+#### 必填
+1. **模型选择（Select）**
+   - deepseek/deepseek-r1-0528:free
+   - moonshotai/kimi-k2:free
+2. **主题关键词（Input）**
+3. **主题描述（Textarea）**
+
+#### 高级设置（折叠面板 / Accordion）
+1. **语言（Select）**
+   - 中文（默认）
+   - English
+   - 日本語（可选）
+2. **语气（Select）**
+   - 正式（默认）
+   - 轻松
+   - 专业
+   - 说服型
+3. **想要扮演的角色（Input / Select + 自定义）**
+   - 例：资深文案、产品经理、学术编辑、营销专家
+   - 默认：资深写作助手
+
+#### 操作按钮
+- 生成（Primary）
+- 重置（Secondary）
+
+### 3.3 输出区
+- 输出文本显示（MVP 推荐纯文本；可选支持 Markdown 渲染）
+- 复制按钮（Copy）
+- 状态提示：
+  - Loading（调用中）
+  - Error（失败原因）
+  - Empty（尚未生成）
+
+---
+
+## 4. 交互与流程
+
+### 4.1 核心流程
+1. 用户填写必填项
+2. 展开高级设置（可选）
+3. 点击"生成"
+4. 前端调用 Next.js API Route（服务端转发）
+5. API Route 调 OpenRouter
+6. 返回结果 → 前端展示 → 可复制
+
+### 4.2 表单校验（MVP）
+- 模型必选
+- 主题关键词非空（建议 2～50 字）
+- 主题描述非空（建议 10～1000 字）
+- 高级设置可为空（空则使用默认值）
+
+### 4.3 状态与异常处理
+- 提交后按钮进入 loading（禁用重复点击）
+- 常见错误提示：
+  - 401/403：API Key 无效或权限不足
+  - 429：请求过多，请稍后再试
+  - 5xx：服务暂时不可用
+- 超时：请求超时，请重试
+- 结果为空：模型未返回内容，请调整描述或重试
+
+---
+
+## 5. 功能需求（MVP）
+
+### 5.1 模型选择
+- 下拉选择
+- 可选：记忆上次选择（localStorage）
+- 可选：静态提示模型风格/速度
+
+### 5.2 Prompt 组织（建议模板）
+系统指令（system）+ 用户输入（user）
+
+#### System（示例）
+- 你是{角色}，用{语言}输出，整体语气为{语气}。
+- 输出要求：结构清晰、可直接复制使用。
+- 若信息不足，可合理补全，但不要编造具体事实来源。
+
+#### User（示例）
+- 主题关键词：xxx
+- 主题描述：xxx
+- 任务：基于以上信息生成内容（MVP 固定：文章大纲 + 正文）
+
+#### MVP 固定输出格式（建议）
+1. 标题候选 x3
+2. 大纲（分点）
+3. 正文（约 600～1000 字）
+4. 可选：结尾总结 / CTA
+
+### 5.3 调用 OpenRouter（MVP 约定）
+- 前端不直接带 Key 调用；通过 Next.js `route.ts` 服务端转发
+- 支持切换 `model` 参数
+- 记录基础日志（model、耗时、成功/失败；可不记录用户原文或仅记录长度）
+
+### 5.4 复制与导出
+- 一键复制输出
+- MVP 不做导出（Doc/PDF），后续可加
+
+---
+
+## 6. 技术实现要求
+
+### 6.1 前端（Next.js + React）
+- 推荐 Next.js App Router
+- shadcn/ui 组件建议：
+  - `Select`, `Input`, `Textarea`, `Button`, `Accordion`, `Card`, `Toast`
+- Tailwind 实现响应式：
+  - 桌面双栏（输入/输出）
+  - 移动端上下布局
+
+### 6.2 服务端（Next.js Route Handler）
+- `POST /api/generate`
+  - 接收表单内容
+  - 拼接 prompt
+  - 请求 OpenRouter
+  - 返回生成结果
+- 使用环境变量存储 `OPENROUTER_API_KEY`
+- 可选：轻量限流（MVP 可先不做）
+
+### 6.3 数据存储（MVP）
+- 不落库
+- localStorage 保存偏好（语言/语气/角色/模型）
+
+---
+
+## 7. 接口需求（OpenRouter）
+
+### 7.1 请求参数（建议）
+- `model`: 下拉选择传入
+- `messages`: system + user
+- `temperature`: MVP 固定（如 0.7）
+- `max_tokens`: MVP 固定（如 1200～2000）
+
+### 7.2 返回处理
+- 解析 `choices[0].message.content`（或等价字段）
+- 返回给前端：
+  - `text`
+  - `usage`（可选：token 统计）
+
+---
+
+## 8. UI 草图（文字版）
+
+### 8.1 桌面端（两栏）
+**输入卡片**
+- 模型选择
+- 主题关键词
+- 主题描述
+- 高级设置（语言/语气/角色）
+- 生成 / 重置
+
+**输出卡片**
+- 标题 + Copy
+- 内容区（滚动）
+- 状态条（耗时/错误/提示）
+
+### 8.2 移动端（上下）
+输入在上，输出在下。
+
+---
+
+## 9. 埋点与可观测性（MVP 轻量）
+- 前端（可先 console）：
+  - 点击生成、成功/失败、模型切换次数
+- 服务端日志：
+  - 开始/结束时间、model、status code
+  - 可不记录原始输入（或只记录长度）
+
+---
+
+## 10. 安全与合规（MVP 最低要求）
+- API Key 仅保存在服务端环境变量
+- 前端不暴露 Key
+- 错误信息对用户友好；服务端保留详细日志
+
+---
+
+## 11. 验收标准（MVP）
+1. 页面可本地启动并正常渲染
+2. 可切换两种模型
+3. 填写关键词与描述后可生成并展示结果
+4. 高级设置会影响输出（语言/语气/角色）
+5. 具备加载态、错误提示、复制按钮
+6. API Key 不出现在浏览器 Network/JS bundle 中
+
+---
+
+## 12. 里程碑（建议）
+- D1：页面结构 + 表单 + 输出区（静态）
+- D2：API Route + OpenRouter 调通
+- D3：状态/错误/复制/偏好保存
+- D4：响应式与文案打磨
+
+---
+
+## 13. 风险与备选方案
+- 免费模型可能限流/不稳定：友好提示 + 支持重试；后续扩展更多模型
+- 输出质量波动：后续加入"写作类型模板"（小红书/公众号/论文摘要等）
+- token 超限：限制输入长度 + max_tokens；必要时截断描述

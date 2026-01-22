@@ -1,4 +1,4 @@
-# AI 写作助手 Demo（MVP）PRD
+# AI 写作助手（MVP）PRD
 
 > 技术栈：Next.js / React / TailwindCSS / shadcn/ui  
 > 模型调用：OpenRouter（支持 deepseek 与 kimi 免费模型）
@@ -8,7 +8,7 @@
 ## 1. 项目概述
 
 ### 1.1 产品名称
-AI 写作助手 Demo（MVP）
+AI 写作助手（MVP）
 
 ### 1.2 背景与问题
 用户希望在一个简单页面里输入主题信息与偏好设置，选择不同大模型（通过 OpenRouter），生成可复制的写作内容，用于演示或快速验证产品方向。
