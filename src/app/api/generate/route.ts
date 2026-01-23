@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { TEMPLATES } from "@/lib/templates";
 
 // Request body type
 interface GenerateRequest {
@@ -8,6 +9,10 @@ interface GenerateRequest {
   language: string;
   tone: string;
   role: string;
+  length: string;
+  template?: string;
+  isContinue?: boolean;
+  previousContent?: string;
 }
 
 // OpenRouter API response type
@@ -28,7 +33,7 @@ export async function POST(request: NextRequest) {
   try {
     // Parse request body
     const body: GenerateRequest = await request.json();
-    const { model, keyword, description, language, tone, role } = body;
+    const { model, keyword, description, language, tone, role, length, template, isContinue, previousContent } = body;
 
     // Validate required fields
     if (!model || !keyword || !description) {
@@ -48,25 +53,52 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Build system prompt
-    const systemPrompt = `你是${role}，用${language}输出，整体语气为${tone}。
-输出要求：结构清晰、可直接复制使用。
-若信息不足，可合理补全，但不要编造具体事实来源。
+    // Map length to max_tokens and word count
+    const lengthConfig = {
+      short: { maxTokens: 800, wordCount: "300-500字" },
+      medium: { maxTokens: 1500, wordCount: "600-1000字" },
+      long: { maxTokens: 2500, wordCount: "1200-2000字" },
+    };
+    const config = lengthConfig[length as keyof typeof lengthConfig] || lengthConfig.medium;
 
-请按以下格式输出：
-1. 标题候选（3个）
-2. 内容大纲（分点列出）
-3. 正文（600-1000字）
-4. 结尾总结或行动建议`;
+    // Get template-specific prompt suffix if exists
+    const selectedTemplate = TEMPLATES.find(t => t.id === template);
+    const templateSuffix = selectedTemplate?.promptSuffix || "";
 
-    // Build user prompt
-    const userPrompt = `主题关键词：${keyword}
+    // Build prompts based on whether it's a continue request
+    let systemPrompt: string;
+    let userPrompt: string;
+
+    if (isContinue && previousContent) {
+      // Continue writing mode
+      systemPrompt = `你是${role},用${language}输出,整体语气为${tone}。
+你需要基于已有内容进行续写,保持风格和语气的一致性。
+续写要求:自然衔接、内容充实、逻辑连贯。`;
+
+      userPrompt = `已有内容：
+${previousContent}
+
+请基于以上内容继续写作,补充更多细节、案例或延伸思考。续写长度约${config.wordCount}。`;
+    } else {
+      // Normal generation mode
+      systemPrompt = `你是${role},用${language}输出,整体语气为${tone}。
+输出要求:结构清晰、可直接复制使用。
+若信息不足,可合理补全,但不要编造具体事实来源。
+
+请按以下格式输出:
+1. 标题候选(3个)
+2. 内容大纲(分点列出)
+3. 正文(${config.wordCount})
+4. 结尾总结或行动建议${templateSuffix}`;
+
+      userPrompt = `主题关键词：${keyword}
 主题描述：${description}
 
 请基于以上信息生成完整的写作内容。`;
+    }
 
     // Log request (without sensitive data)
-    console.log(`[API] Generating content with model: ${model}`);
+    console.log(`[API] Generating content with model: ${model}, template: ${template || 'default'}`);
     console.log(`[API] Keyword length: ${keyword.length}, Description length: ${description.length}`);
 
     const startTime = Date.now();
@@ -92,15 +124,14 @@ export async function POST(request: NextRequest) {
             { role: "user", content: userPrompt },
           ],
           temperature: 0.7,
-          max_tokens: 2000,
+          max_tokens: config.maxTokens,
+          stream: true, // Enable streaming
         }),
         signal: controller.signal,
       });
     } finally {
       clearTimeout(timeoutId);
     }
-
-    const duration = Date.now() - startTime;
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
@@ -135,48 +166,103 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const data: OpenRouterResponse = await response.json();
+    // Return streaming response
+    const stream = new ReadableStream({
+      async start(controller) {
+        const reader = response.body?.getReader();
+        const decoder = new TextDecoder();
 
-    // Check for error in response body (OpenRouter sometimes returns 200 with error)
-    if ('error' in data && (data as any).error) {
-      const error = (data as any).error;
-      console.error("[API] OpenRouter returned error:", error);
+        if (!reader) {
+          controller.close();
+          return;
+        }
 
-      let errorMessage = "生成失败，请重试";
-      if (error.code === 502 || error.message?.includes('Network connection lost')) {
-        errorMessage = "网络连接中断，请重试（免费模型在高峰期可能不稳定）";
-      }
+        let buffer = ''; // Buffer to accumulate incomplete chunks
+        let isClosed = false;
 
-      return NextResponse.json(
-        { success: false, error: errorMessage },
-        { status: 500 }
-      );
-    }
+        const enqueueData = (content: string) => {
+          if (!isClosed) {
+            try {
+              controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ content })}\n\n`));
+            } catch (e) {
+              console.error('Failed to enqueue data:', e);
+              isClosed = true;
+            }
+          }
+        };
 
-    // Extract generated text
-    const text = data.choices?.[0]?.message?.content;
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
 
-    if (!text) {
-      console.error("[API] No content in response:", data);
-      return NextResponse.json(
-        { success: false, error: "模型未返回内容，请调整描述或重试" },
-        { status: 500 }
-      );
-    }
+            // Decode chunk and add to buffer
+            buffer += decoder.decode(value, { stream: true });
 
-    // Log success
-    console.log(`[API] Success in ${duration}ms, tokens: ${data.usage?.total_tokens || 'N/A'}`);
+            // Split by newlines but keep incomplete lines in buffer
+            const lines = buffer.split('\n');
 
-    // Return success response
-    return NextResponse.json({
-      success: true,
-      data: {
-        text: text,
-        usage: data.usage ? {
-          promptTokens: data.usage.prompt_tokens,
-          completionTokens: data.usage.completion_tokens,
-          totalTokens: data.usage.total_tokens,
-        } : undefined,
+            // Keep the last (potentially incomplete) line in the buffer
+            buffer = lines.pop() || '';
+
+            // Process complete lines
+            for (const line of lines) {
+              const trimmedLine = line.trim();
+              if (!trimmedLine) continue;
+
+              if (trimmedLine.startsWith('data: ')) {
+                const data = trimmedLine.slice(6);
+                if (data === '[DONE]') continue;
+
+                try {
+                  const json = JSON.parse(data);
+                  const content = json.choices?.[0]?.delta?.content;
+
+                  if (content) {
+                    enqueueData(content);
+                  }
+                } catch (e) {
+                  // Skip invalid JSON (should be rare now with buffering)
+                  console.error('Failed to parse SSE data:', e);
+                }
+              }
+            }
+          }
+
+          // Process any remaining data in buffer
+          if (buffer.trim() && !isClosed) {
+            const trimmedLine = buffer.trim();
+            if (trimmedLine.startsWith('data: ')) {
+              const data = trimmedLine.slice(6);
+              if (data !== '[DONE]') {
+                try {
+                  const json = JSON.parse(data);
+                  const content = json.choices?.[0]?.delta?.content;
+                  if (content) {
+                    enqueueData(content);
+                  }
+                } catch (e) {
+                  console.error('Failed to parse final SSE data:', e);
+                }
+              }
+            }
+          }
+        } catch (error) {
+          console.error('[API] Stream error:', error);
+        } finally {
+          if (!isClosed) {
+            controller.close();
+            isClosed = true;
+          }
+        }
+      },
+    });
+
+    return new Response(stream, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
       },
     });
 
