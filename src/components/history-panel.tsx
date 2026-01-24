@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { History, Trash2, Clock, FileText, Star } from "lucide-react";
@@ -10,48 +10,83 @@ import {
   deleteHistoryItem,
   clearHistory,
   toggleFavorite,
+  getFavorites,
+  clearFavorites,
+  clearNonFavorites,
   type HistoryItem,
 } from "@/lib/history";
 import { TEMPLATES } from "@/lib/templates";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 interface HistoryPanelProps {
   onSelectHistory: (item: HistoryItem) => void;
+  mode?: "history" | "favorites";
+  onChanged?: (changedId?: string) => void;
 }
 
-export function HistoryPanel({ onSelectHistory }: HistoryPanelProps) {
-  const [history, setHistory] = useState<HistoryItem[]>([]);
-
-  useEffect(() => {
-    loadHistory();
-  }, []);
-
-  const loadHistory = () => {
-    const items = getHistory();
-    setHistory(items);
-  };
+export function HistoryPanel({ onSelectHistory, mode = "history", onChanged }: HistoryPanelProps) {
+  const loadData = () => (mode === "favorites" ? getFavorites() : getHistory());
+  const [history, setHistory] = useState<HistoryItem[]>(() => loadData());
 
   const handleDelete = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    const item = history.find(h => h.id === id);
+    if (mode === "history" && item?.isFavorite) {
+      const ok = confirm("该记录已收藏，删除将同时移除收藏标记，是否继续删除？");
+      if (!ok) return;
+    }
     deleteHistoryItem(id);
-    loadHistory();
-    toast.success("历史记录已删除");
+    setHistory(loadData());
+    toast.success(mode === "favorites" ? "已从收藏中移除该记录" : "历史记录已删除");
+    onChanged?.(id);
   };
 
   const handleToggleFavorite = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     toggleFavorite(id);
-    loadHistory();
+    setHistory(loadData());
     const item = history.find(h => h.id === id);
     toast.success(item?.isFavorite ? "已取消收藏" : "已收藏");
+    onChanged?.(id);
   };
 
   const handleClearAll = () => {
     if (history.length === 0) return;
 
-    if (confirm("确定要清空所有历史记录吗？")) {
-      clearHistory();
-      loadHistory();
-      toast.success("历史记录已清空");
+    if (mode === "favorites") {
+      if (confirm("确定要取消全部收藏吗？")) {
+        clearFavorites();
+        setHistory(loadData());
+        toast.success("已取消全部收藏");
+        onChanged?.();
+      }
+    } else {
+      if (confirm("确定要清空所有历史记录（包括收藏）吗？")) {
+        clearHistory();
+        setHistory(loadData());
+        toast.success("历史记录已清空（含收藏）");
+        onChanged?.();
+      }
+    }
+  };
+
+  const handleClearNonFavorites = () => {
+    if (history.length === 0) return;
+    const hasNonFav = history.some(h => !h.isFavorite);
+    if (!hasNonFav) {
+      toast.info("没有可清空的非收藏记录");
+      return;
+    }
+    if (confirm("清空所有非收藏的历史记录，保留收藏项？")) {
+      clearNonFavorites();
+      setHistory(loadData());
+      toast.success("已清空非收藏记录，收藏项已保留");
+      onChanged?.();
     }
   };
 
@@ -81,37 +116,80 @@ export function HistoryPanel({ onSelectHistory }: HistoryPanelProps) {
         <div className="flex items-center justify-between pb-4 mb-4 border-b px-1">
           <div className="flex items-center gap-2">
             <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center">
-              <History className="h-4 w-4 text-primary" />
+              {mode === "favorites" ? (
+                <Star className="h-4 w-4 text-yellow-500" />
+              ) : (
+                <History className="h-4 w-4 text-primary" />
+              )}
             </div>
             <div>
-              <p className="text-sm font-medium">历史记录</p>
+              <p className="text-sm font-medium">
+                {mode === "favorites" ? "收藏列表" : "历史记录"}
+              </p>
               <p className="text-xs text-muted-foreground">
                 共 {history.length} 条记录
               </p>
             </div>
           </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleClearAll}
-            className="h-8 text-xs text-muted-foreground hover:text-destructive"
-          >
-            清空
-          </Button>
+          {mode === "favorites" ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleClearAll}
+              className="h-8 text-xs text-muted-foreground hover:text-yellow-600"
+            >
+              取消全部收藏
+            </Button>
+          ) : (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 text-xs text-muted-foreground hover:text-destructive"
+                >
+                  清空
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={handleClearNonFavorites}>
+                  仅清空非收藏
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleClearAll}>
+                  清空全部（含收藏）
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
         </div>
       )}
 
       {/* History list */}
-      <ScrollArea className="flex-1 -mx-1">
+      <ScrollArea className="flex-1 min-h-0">
         {history.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-[400px] text-center px-4">
             <div className="h-20 w-20 rounded-full bg-muted/50 flex items-center justify-center mb-4">
-              <History className="h-10 w-10 text-muted-foreground/50" />
+              {mode === "favorites" ? (
+                <Star className="h-10 w-10 text-yellow-500/60" />
+              ) : (
+                <History className="h-10 w-10 text-muted-foreground/50" />
+              )}
             </div>
-            <p className="text-sm font-medium text-foreground mb-1">暂无历史记录</p>
-            <p className="text-xs text-muted-foreground max-w-[200px]">
-              生成的内容会自动保存在这里，方便随时查看
-            </p>
+            {mode === "favorites" ? (
+              <>
+                <p className="text-sm font-medium text-foreground mb-1">暂无收藏</p>
+                <p className="text-xs text-muted-foreground max-w-[240px]">
+                  在历史记录中点击星标可收藏内容
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="text-sm font-medium text-foreground mb-1">暂无历史记录</p>
+                <p className="text-xs text-muted-foreground max-w-[200px]">
+                  生成的内容会自动保存在这里，方便随时查看
+                </p>
+              </>
+            )}
           </div>
         ) : (
           <div className="space-y-3 px-1 pb-4">

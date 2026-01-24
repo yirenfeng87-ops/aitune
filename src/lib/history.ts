@@ -85,3 +85,55 @@ export function toggleFavorite(id: string): void {
 export function getFavorites(): HistoryItem[] {
   return getHistory().filter(item => item.isFavorite);
 }
+
+export function clearFavorites(): void {
+  const history = getHistory();
+  const updatedHistory = history.map(item =>
+    item.isFavorite ? { ...item, isFavorite: false } : item
+  );
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(updatedHistory));
+  } catch (error) {
+    console.error("Failed to clear favorites:", error);
+  }
+}
+
+export function clearNonFavorites(): void {
+  const history = getHistory();
+  const updatedHistory = history.filter(item => item.isFavorite);
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(updatedHistory));
+  } catch (error) {
+    console.error("Failed to clear non-favorites:", error);
+  }
+}
+
+export function getHistoryItemById(id: string): HistoryItem | null {
+  const history = getHistory();
+  const item = history.find(h => h.id === id);
+  return item ?? null;
+}
+
+export function findLatestByContent(keyword: string, output: string): HistoryItem | null {
+  const history = getHistory();
+  // getHistory returns sorted by timestamp desc, so the first match is the latest
+  const item = history.find(h => h.keyword === keyword && h.output === output);
+  return item ?? null;
+}
+
+export function updateHistoryItem(id: string, updates: Partial<Omit<HistoryItem, "id">>): HistoryItem | null {
+  const history = getHistory();
+  let updated: HistoryItem | null = null;
+  const next = history.map(item => {
+    if (item.id !== id) return item;
+    updated = { ...item, ...updates, timestamp: Date.now() };
+    return updated;
+  });
+  if (!updated) return null;
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+  } catch (error) {
+    console.error("Failed to update history item:", error);
+  }
+  return updated;
+}

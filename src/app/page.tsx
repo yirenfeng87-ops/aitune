@@ -11,7 +11,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
-import { History } from "lucide-react";
+import { History, Star } from "lucide-react";
 import { useState, useRef, useCallback } from "react";
 import type { HistoryItem } from "@/lib/history";
 
@@ -20,7 +20,10 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [historyKey, setHistoryKey] = useState(0);
-  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isSheetOpen, setIsSheetOpen] = useState(false);
+  const [sheetMode, setSheetMode] = useState<"history" | "favorites">("history");
+  const [keyword, setKeyword] = useState<string>("");
+  const [lastHistoryItem, setLastHistoryItem] = useState<HistoryItem | null>(null);
   const regenerateRef = useRef<(() => void) | null>(null);
   const continueRef = useRef<(() => void) | null>(null);
   const loadHistoryRef = useRef<((item: HistoryItem) => void) | null>(null);
@@ -46,8 +49,10 @@ export default function Home() {
       loadHistoryRef.current(item);
     }
     setOutput(item.output);
+    setKeyword(item.keyword);
     setError(null);
-    setIsHistoryOpen(false); // Close the sheet after selecting
+    setIsSheetOpen(false); // Close the sheet after selecting
+    setLastHistoryItem(item);
   }, []);
 
   const refreshHistory = () => {
@@ -66,21 +71,62 @@ export default function Home() {
                 选择 AI 模型，输入主题，生成高质量写作内容
               </p>
             </div>
-            <Sheet open={isHistoryOpen} onOpenChange={setIsHistoryOpen}>
+            <Sheet open={isSheetOpen} onOpenChange={setIsSheetOpen}>
               <SheetTrigger asChild>
-                <Button variant="outline" className="gap-2">
-                  <History className="h-4 w-4" />
-                  历史记录
-                </Button>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    className={`gap-2 ${
+                      isSheetOpen && sheetMode === "history"
+                        ? "bg-primary/10 text-primary border-primary/30"
+                        : ""
+                    }`}
+                    onClick={() => {
+                      setSheetMode("history");
+                      setIsSheetOpen(true);
+                    }}
+                  >
+                    <History className="h-4 w-4" />
+                    历史记录
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className={`gap-2 ${
+                      isSheetOpen && sheetMode === "favorites"
+                        ? "bg-yellow-100/20 text-yellow-600 border-yellow-500/40 dark:bg-yellow-300/10 dark:text-yellow-400 dark:border-yellow-300/30"
+                        : ""
+                    }`}
+                    onClick={() => {
+                      setSheetMode("favorites");
+                      setIsSheetOpen(true);
+                    }}
+                  >
+                    <Star className="h-4 w-4" />
+                    收藏列表
+                  </Button>
+                </div>
               </SheetTrigger>
               <SheetContent className="w-[400px] sm:w-[540px]">
                 <SheetHeader className="px-2">
-                  <SheetTitle>历史记录</SheetTitle>
+                  <SheetTitle>{sheetMode === "favorites" ? "收藏列表" : "历史记录"}</SheetTitle>
                 </SheetHeader>
                 <div className="mt-6 h-[calc(100vh-8rem)] overflow-hidden px-2">
                   <HistoryPanel
-                    key={historyKey}
+                    key={`${sheetMode}-${historyKey}`}
                     onSelectHistory={handleSelectHistory}
+                    mode={sheetMode}
+                    onChanged={(changedId) => {
+                      // refresh list
+                      refreshHistory();
+                      // if current output corresponds to changed item, refresh its favorite state
+                      if (changedId && lastHistoryItem && lastHistoryItem.id === changedId) {
+                        try {
+                          const { getHistoryItemById } = require("@/lib/history") as typeof import("@/lib/history");
+                          const updated = getHistoryItemById(changedId);
+                          if (updated) setLastHistoryItem(updated);
+                        } catch {}
+                      }
+                    }}
                   />
                 </div>
               </SheetContent>
@@ -104,19 +150,30 @@ export default function Home() {
               regenerateRef={regenerateRef}
               continueRef={continueRef}
               loadHistoryRef={loadHistoryRef}
-              onHistorySaved={refreshHistory}
+              onHistorySaved={(item) => {
+                setLastHistoryItem(item);
+                refreshHistory();
+              }}
+              onKeywordChange={setKeyword}
             />
           </div>
 
           {/* Right Column - Output Panel */}
           <div className="overflow-hidden">
-            <OutputPanel
+              <OutputPanel
+              key={lastHistoryItem?.id || `out-${historyKey}`}
               output={output}
               isLoading={isLoading}
               error={error}
               onRegenerate={handleRegenerate}
               onContinue={handleContinue}
               onOutputChange={handleOutputChange}
+              keyword={keyword}
+              lastHistoryItem={lastHistoryItem || undefined}
+                onHistoryUpdated={(item) => {
+                  if (item) setLastHistoryItem(item);
+                  refreshHistory();
+                }}
             />
           </div>
         </div>
