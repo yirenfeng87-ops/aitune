@@ -12,8 +12,9 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { History, Star } from "lucide-react";
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import type { HistoryItem } from "@/lib/history";
+import { getHistoryItemById } from "@/lib/history";
 
 export default function Home() {
   const [output, setOutput] = useState<string>("");
@@ -27,6 +28,10 @@ export default function Home() {
   const regenerateRef = useRef<(() => void) | null>(null);
   const continueRef = useRef<(() => void) | null>(null);
   const loadHistoryRef = useRef<((item: HistoryItem) => void) | null>(null);
+  const [authed, setAuthed] = useState<boolean>(false);
+  const [loginUser, setLoginUser] = useState<string>("");
+  const [loginPass, setLoginPass] = useState<string>("");
+
 
   const handleRegenerate = () => {
     if (regenerateRef.current) {
@@ -61,6 +66,45 @@ export default function Home() {
 
   return (
     <div className="h-screen bg-background flex flex-col overflow-hidden">
+      {!authed && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-background">
+          <div className="w-full max-w-sm rounded-lg border bg-card p-6 shadow-sm">
+            <h2 className="text-xl font-semibold mb-4">登录</h2>
+            <p className="text-xs text-muted-foreground mb-4">输入账号与密码，点击登录即可进入</p>
+            <div className="space-y-3">
+              <div className="space-y-2">
+                <label htmlFor="login-user" className="text-sm">账号</label>
+                <input
+                  id="login-user"
+                  className="w-full rounded border px-3 py-2 text-sm bg-background"
+                  value={loginUser}
+                  onChange={(e) => setLoginUser(e.target.value)}
+                  placeholder="请输入账号"
+                />
+              </div>
+              <div className="space-y-2">
+                <label htmlFor="login-pass" className="text-sm">密码</label>
+                <input
+                  id="login-pass"
+                  type="password"
+                  className="w-full rounded border px-3 py-2 text-sm bg-background"
+                  value={loginPass}
+                  onChange={(e) => setLoginPass(e.target.value)}
+                  placeholder="请输入密码"
+                />
+              </div>
+              <button
+                className="w-full rounded bg-primary text-primary-foreground text-sm py-2 mt-2"
+                onClick={() => {
+                  setAuthed(true);
+                }}
+              >
+                登录
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Header */}
       <header className="border-b flex-shrink-0">
         <div className="container mx-auto px-4 py-4">
@@ -120,11 +164,8 @@ export default function Home() {
                       refreshHistory();
                       // if current output corresponds to changed item, refresh its favorite state
                       if (changedId && lastHistoryItem && lastHistoryItem.id === changedId) {
-                        try {
-                          const { getHistoryItemById } = require("@/lib/history") as typeof import("@/lib/history");
-                          const updated = getHistoryItemById(changedId);
-                          if (updated) setLastHistoryItem(updated);
-                        } catch {}
+                        const updated = getHistoryItemById(changedId);
+                        if (updated) setLastHistoryItem(updated);
                       }
                     }}
                   />

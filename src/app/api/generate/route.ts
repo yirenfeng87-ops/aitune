@@ -44,13 +44,91 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const wantStream = body.stream !== false;
+
+    const lengthConfig = {
+      short: { maxTokens: 1000, wordCount: "300-500字", minChars: 300, maxChars: 500 },
+      medium: { maxTokens: 1800, wordCount: "800-1200字", minChars: 800, maxChars: 1200 },
+      long: { maxTokens: 2600, wordCount: "1500-2200字", minChars: 1500, maxChars: 2200 },
+    };
+    const config = lengthConfig[length as keyof typeof lengthConfig] || lengthConfig.medium;
+    const requestMaxTokens = (isContinue ? Math.floor((lengthConfig[length as keyof typeof lengthConfig] || lengthConfig.medium).maxTokens * 2.2) : config.maxTokens);
+
     // Validate API key
     const apiKey = process.env.OPENROUTER_API_KEY;
     if (!apiKey) {
-      console.error("OPENROUTER_API_KEY is not configured");
+      const kw = keyword;
+      const desc = description;
+      const lc = language;
+      let stub = "";
+      if (lc === "English") {
+        stub =
+          `Notice: This is locally generated fallback content due to remote generation failure or rate limit. For reference only.\n\n` +
+          `1. Title Candidates\n` +
+          `1. ${kw}: Key Points and Practice\n` +
+          `2. ${kw} Strategy Guide\n` +
+          `3. ${kw} Case Notes\n\n` +
+          `2. Outline\n` +
+          `1. Background and Goals\n` +
+          `2. Key Points\n` +
+          `3. Cases and Practice\n` +
+          `4. Risks and Measures\n` +
+          `5. Summary\n\n` +
+          `3. Body (${config.wordCount})\n` +
+          `${kw} — ${desc}\n\n` +
+          `4. Conclusion\n`;
+      } else if (lc === "日本語") {
+        stub =
+          `注意：これは生成失敗・レート制限時のローカルフォールバックです。参考用。\n\n` +
+          `1. タイトル候補\n` +
+          `1. ${kw}の要点と実践\n` +
+          `2. ${kw}戦略ガイド\n` +
+          `3. ${kw}ケースメモ\n\n` +
+          `2. アウトライン\n` +
+          `1. 背景と目的\n` +
+          `2. 重要ポイント\n` +
+          `3. 事例と実践\n` +
+          `4. リスクと対策\n` +
+          `5. まとめ\n\n` +
+          `3. 本文（${config.wordCount}）\n` +
+          `${kw} — ${desc}\n\n` +
+          `4. 結論\n`;
+      } else {
+        stub =
+          `提示：当前内容为生成失败后的兜底内容（本地生成），仅供参考。\n\n` +
+          `1. 标题候选\n` +
+          `1. ${kw}：核心要点与实践\n` +
+          `2. ${kw}应用攻略\n` +
+          `3. ${kw}策略笔记\n\n` +
+          `2. 内容大纲\n` +
+          `1. 背景与目标\n` +
+          `2. 关键观点\n` +
+          `3. 案例与实践\n` +
+          `4. 风险与对策\n` +
+          `5. 总结\n\n` +
+          `3. 正文（${config.wordCount}）\n` +
+          `${kw} — ${desc}\n\n` +
+          `4. 结尾总结\n`;
+      }
+      if (wantStream) {
+        const stream = new ReadableStream({
+          async start(controller) {
+            controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ content: stub, meta: { source: "local_fallback_stream", failureType: "code", status: 500 } })}\n\n`));
+            controller.close();
+          },
+        });
+        return new Response(stream, {
+          headers: {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'X-Failure-Type': 'code',
+          },
+        });
+      }
       return NextResponse.json(
-        { success: false, error: "服务配置错误，请联系管理员", failureType: "code" },
-        { status: 500 }
+        { success: true, content: stub, meta: { source: "local_fallback", failureType: "code" } },
+        { status: 200, headers: { "X-Source": "local_fallback", "X-Failure-Type": "code" } }
       );
     }
 
@@ -63,13 +141,7 @@ export async function POST(request: NextRequest) {
     const headersWithReferer = referer ? { ...baseHeaders, "HTTP-Referer": referer } : baseHeaders;
 
     // Map length to max_tokens and word count
-    const lengthConfig = {
-      short: { maxTokens: 1000, wordCount: "300-500字", minChars: 300, maxChars: 500 },
-      medium: { maxTokens: 1800, wordCount: "800-1200字", minChars: 800, maxChars: 1200 },
-      long: { maxTokens: 2600, wordCount: "1500-2200字", minChars: 1500, maxChars: 2200 },
-    };
-    const config = lengthConfig[length as keyof typeof lengthConfig] || lengthConfig.medium;
-    const requestMaxTokens = (isContinue ? Math.floor((lengthConfig[length as keyof typeof lengthConfig] || lengthConfig.medium).maxTokens * 1.6) : config.maxTokens);
+    
 
     // Get template-specific prompt suffix if exists
     const selectedTemplate = TEMPLATES.find(t => t.id === template);
@@ -81,16 +153,38 @@ export async function POST(request: NextRequest) {
 
     if (isContinue && previousContent) {
       // Continue writing mode
+      // Extract outline entries from previous content
+      const prev = previousContent as string;
+      const lines = prev.split(/\r?\n/);
+      const iOutline = lines.findIndex(l => /^#\s*2\.\s+/.test(l));
+      const iBody = lines.findIndex(l => /^#\s*3\.\s+/.test(l));
+      const iConclusion = lines.findIndex(l => /^#\s*4\.\s+/.test(l));
+      const conclusionSeg = iConclusion !== -1 ? lines.slice(iConclusion + 1).join("\n").trim() : "";
+      const wantConclusion = iConclusion !== -1 && conclusionSeg.replace(/\s+/g, "").length < 50;
+      const outlineItems = iOutline !== -1
+        ? lines.slice(iOutline + 1, iBody === -1 ? lines.length : iBody)
+            .filter(l => /^\s*##\s+/.test(l))
+            .map(l => l.replace(/^\s*##\s+/, "").trim())
+        : [];
+      const outlineBlock = outlineItems.length > 0
+        ? `参考大纲（保持顺序，不修改文本，不扩展为细节，仅用于正文衔接）：\n- ${outlineItems.join("\n- ")}\n`
+        : "";
+      const targetSection = wantConclusion ? "4. 结尾总结或行动建议" : "3. 正文";
       systemPrompt = `你是${role},用${language}输出,整体语气为${tone}。
 你需要基于已有内容进行续写,保持风格和语气的一致性。
-续写要求:自然衔接、内容充实、逻辑连贯。
-续写以完整性优先,为保证结构与内容的完整,可超过所选长度范围。
-所有序号和有序列表使用阿拉伯数字(1,2,3)，不要使用罗马数字。`;
+严格沿用既有结构，不得新增或修改顶层标题（1. 标题候选、2. 内容大纲、3. 正文、4. 结尾总结或行动建议）。
+续写只在“${targetSection}”部分展开，不要输出新的顶层标题或小标题，不要在行首添加任何编号或“##”。
+若需要引用内容大纲，请在正文段落中自然衔接，不生成新的“2.x”条目或其他编号。
+续写要求：自然衔接、内容充实、逻辑连贯；如为保障完整性，可超过当前长度范围。
+所有序号与列表由前端负责渲染，请不要在文本中手动编号。`;
 
       userPrompt = `已有内容：
 ${previousContent}
 
-请基于以上内容继续写作,补充更多细节、案例或延伸思考。续写长度以完整性为主,可超过${config.wordCount}。`;
+${outlineBlock}
+
+请基于以上内容在“${targetSection}”部分继续写作，补充更多细节、案例或延伸思考。
+不要输出新的顶层标题或编号，仅输出自然段落文本。续写长度以完整性为主，可超过${config.wordCount}。`;
     } else {
       // Normal generation mode
       systemPrompt = `你是${role},用${language}输出,整体语气为${tone}。
@@ -119,7 +213,6 @@ ${previousContent}
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minutes timeout
 
-    const wantStream = body.stream !== false;
     if (!wantStream) {
       try {
         const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -265,9 +358,62 @@ ${previousContent}
         const data: OpenRouterResponse = await resp.json();
         const content = data.choices?.[0]?.message?.content;
         if (!content) {
+          const kw = keyword;
+          const desc = description;
+          const lc = language;
+          let stub = "";
+          if (lc === "English") {
+            stub =
+              `Notice: This is locally generated fallback content due to remote generation failure or rate limit. For reference only.\n\n` +
+              `1. Title Candidates\n` +
+              `1. ${kw}: Key Points and Practice\n` +
+              `2. ${kw} Strategy Guide\n` +
+              `3. ${kw} Case Notes\n\n` +
+              `2. Outline\n` +
+              `1. Background and Goals\n` +
+              `2. Key Points\n` +
+              `3. Cases and Practice\n` +
+              `4. Risks and Measures\n` +
+              `5. Summary\n\n` +
+              `3. Body (${config.wordCount})\n` +
+              `${kw} — ${desc}\n\n` +
+              `4. Conclusion\n`;
+          } else if (lc === "日本語") {
+            stub =
+              `注意：これは生成失敗・レート制限時のローカルフォールバックです。参考用。\n\n` +
+              `1. タイトル候補\n` +
+              `1. ${kw}の要点と実践\n` +
+              `2. ${kw}戦略ガイド\n` +
+              `3. ${kw}ケースメモ\n\n` +
+              `2. アウトライン\n` +
+              `1. 背景と目的\n` +
+              `2. 重要ポイント\n` +
+              `3. 事例と実践\n` +
+              `4. リスクと対策\n` +
+              `5. まとめ\n\n` +
+              `3. 本文（${config.wordCount}）\n` +
+              `${kw} — ${desc}\n\n` +
+              `4. 結論\n`;
+          } else {
+            stub =
+              `提示：当前内容为生成失败后的兜底内容（本地生成），仅供参考。\n\n` +
+              `1. 标题候选\n` +
+              `1. ${kw}：核心要点与实践\n` +
+              `2. ${kw}应用攻略\n` +
+              `3. ${kw}策略笔记\n\n` +
+              `2. 内容大纲\n` +
+              `1. 背景与目标\n` +
+              `2. 关键观点\n` +
+              `3. 案例与实践\n` +
+              `4. 风险与对策\n` +
+              `5. 总结\n\n` +
+              `3. 正文（${config.wordCount}）\n` +
+              `${kw} — ${desc}\n\n` +
+              `4. 结尾总结\n`;
+          }
           return NextResponse.json(
-            { success: false, error: "生成结果为空，请重试", failureType: "API" },
-            { status: 500 }
+            { success: true, content: stub, meta: { source: "local_fallback", failureType: "API" } },
+            { status: 200, headers: { "X-Source": "local_fallback", "X-Failure-Type": "API" } }
           );
         }
         return NextResponse.json({ success: true, content }, { status: 200, headers: { "X-Source": "upstream_sync" } });

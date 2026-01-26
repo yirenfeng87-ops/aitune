@@ -15,9 +15,9 @@ import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
  
-import { toggleFavorite, findLatestByContent, addToHistory } from "@/lib/history";
+import { toggleFavorite, findLatestByContent, addToHistory, getHistoryItemById } from "@/lib/history";
 import type { HistoryItem } from "@/lib/history";
-import { getCharCount } from "@/lib/text";
+import { getChineseCharCount } from "@/lib/text";
 
 interface OutputPanelProps {
   output: string;
@@ -34,27 +34,22 @@ interface OutputPanelProps {
 export function OutputPanel({ output, isLoading, error, onRegenerate, onContinue, onOutputChange, keyword, lastHistoryItem, onHistoryUpdated }: OutputPanelProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editedContent, setEditedContent] = useState("");
-  const [isFavorited, setIsFavorited] = useState<boolean>(!!lastHistoryItem?.isFavorite);
+  const isFavorited = useMemo(() => !!lastHistoryItem?.isFavorite, [lastHistoryItem?.isFavorite]);
 
-  const charCount = useMemo(() => getCharCount(output || ""), [output]);
+  const cnCount = useMemo(() => getChineseCharCount(output || ""), [output]);
 
   const h1Count = useRef(0);
   const h2Count = useRef(0);
+  const currentSection = useRef(0);
+  const seenH2 = useRef<Set<string>>(new Set());
   useEffect(() => {
     h1Count.current = 0;
     h2Count.current = 0;
+    currentSection.current = 0;
+    seenH2.current = new Set();
   }, [output]);
-  const toCjk = (n: number) => {
-    const map = [
-      "", "一", "二", "三", "四", "五",
-      "六", "七", "八", "九", "十",
-      "十一", "十二", "十三", "十四", "十五",
-      "十六", "十七", "十八", "十九", "二十",
-    ];
-    return n >= 1 && n < map.length ? map[n] : String(n);
-  };
   const stripLeadingOrder = (text: string) => {
-    return text.replace(/^\s*(?:\d+|[IVXLCDM]+|[一二三四五六七八九十]+)[\.、\)\s]+/, "");
+    return text.replace(/^\s*(?:\d+(?:\.\d+)*|[IVXLCDM]+|[一二三四五六七八九十]+)[\.、\)\s]+/, "");
   };
   const toPlainText = (node: React.ReactNode): string => {
     if (node == null) return "";
@@ -84,9 +79,7 @@ export function OutputPanel({ output, isLoading, error, onRegenerate, onContinue
     setIsEditing(true);
   };
 
-  useEffect(() => {
-    setIsFavorited(!!lastHistoryItem?.isFavorite);
-  }, [lastHistoryItem?.isFavorite, lastHistoryItem?.id]);
+  // Sync heading counters on output change
 
   const handleSave = () => {
     if (onOutputChange) {
@@ -161,9 +154,9 @@ export function OutputPanel({ output, isLoading, error, onRegenerate, onContinue
     }
     try {
       toggleFavorite(targetId);
-      const nowFav = !isFavorited;
-      setIsFavorited(nowFav);
-      onHistoryUpdated?.();
+      const updated = getHistoryItemById(targetId);
+      const nowFav = updated?.isFavorite ?? !isFavorited;
+      onHistoryUpdated?.(updated || undefined);
       toast.success(nowFav ? "已收藏" : "已取消收藏");
     } catch {
       toast.error("操作失败，请重试");
@@ -198,10 +191,13 @@ export function OutputPanel({ output, isLoading, error, onRegenerate, onContinue
       <CardHeader className="flex-shrink-0">
         <div className="flex flex-col gap-2">
           <div className="flex items-center justify-between">
-            <CardTitle>生成结果</CardTitle>
+            <div className="flex items-center gap-2">
+              <CardTitle>生成结果</CardTitle>
+              <span className="text-sm text-muted-foreground">- AI生成，内容仅供参考</span>
+            </div>
             {output && (
               <div className="text-xs text-muted-foreground">
-                字数：{charCount}
+                中文字数：{cnCount}
               </div>
             )}
           </div>
@@ -363,27 +359,102 @@ export function OutputPanel({ output, isLoading, error, onRegenerate, onContinue
                       h1: (props) => {
                         h1Count.current += 1;
                         h2Count.current = 0;
-                        const label = toCjk(h1Count.current);
+                        seenH2.current = new Set();
                         const raw = toPlainText(props.children);
                         const content = stripLeadingOrder(raw).trim();
+                        let label = String(h1Count.current);
+                        if (/^(标题候选)/.test(content)) label = "1";
+                        else if (/^(内容大纲)/.test(content)) label = "2";
+                        else if (/^(正文)/.test(content)) label = "3";
+                        else if (/^(结尾总结|结尾总结或行动建议|行动建议|结语)/.test(content)) label = "4";
+                        currentSection.current = parseInt(label, 10) || h1Count.current;
                         return (
                           <h1 {...props}>
-                            <span className="text-foreground font-semibold mr-1">{label}、</span>
+                            <span className="text-foreground font-semibold mr-1">{label}. </span>
                             {content.length > 0 ? content : props.children}
                           </h1>
                         );
                       },
                       h2: (props) => {
-                        h2Count.current += 1;
-                        const label = String(h2Count.current);
                         const raw = toPlainText(props.children);
+                        const m = raw.match(/^\s*(\d+(?:\.\d+)+)[\.、\)\s]+/);
+                        let idx: number;
+                        if (m) {
+                          const parts = m[1].split(".");
+                          idx = parseInt(parts[parts.length - 1], 10) || 1;
+                        } else {
+                          const key = raw.trim();
+                          if (!seenH2.current.has(key)) {
+                            seenH2.current.add(key);
+                            h2Count.current += 1;
+                          }
+                          idx = h2Count.current;
+                        }
+                        const parent = currentSection.current || h1Count.current || 1;
+                        const label = `${parent}.${idx}`;
                         const content = stripLeadingOrder(raw).trim();
                         return (
                           <h2 {...props}>
-                            <span className="text-foreground font-semibold mr-1">{label}、</span>
+                            <span className="text-foreground font-semibold mr-1">{label} </span>
                             {content.length > 0 ? content : props.children}
                           </h2>
                         );
+                      },
+                      h3: (props) => {
+                        const raw = toPlainText(props.children);
+                        const content = stripLeadingOrder(raw).trim();
+                        let label = String(h1Count.current + 1);
+                        if (/^(标题候选)/.test(content)) label = "1";
+                        else if (/^(内容大纲)/.test(content)) label = "2";
+                        else if (/^(正文)/.test(content)) label = "3";
+                        else if (/^(结尾总结|结尾总结或行动建议|行动建议|结语)/.test(content)) label = "4";
+                        const num = parseInt(label, 10);
+                        if (!Number.isNaN(num)) {
+                          currentSection.current = num;
+                        }
+                        return <h3 {...props}>{props.children}</h3>;
+                      },
+                      h4: (props) => {
+                        const raw = toPlainText(props.children);
+                        const content = stripLeadingOrder(raw).trim();
+                        let label = String(h1Count.current + 1);
+                        if (/^(标题候选)/.test(content)) label = "1";
+                        else if (/^(内容大纲)/.test(content)) label = "2";
+                        else if (/^(正文)/.test(content)) label = "3";
+                        else if (/^(结尾总结|结尾总结或行动建议|行动建议|结语)/.test(content)) label = "4";
+                        const num = parseInt(label, 10);
+                        if (!Number.isNaN(num)) {
+                          currentSection.current = num;
+                        }
+                        return <h4 {...props}>{props.children}</h4>;
+                      },
+                      h5: (props) => {
+                        const raw = toPlainText(props.children);
+                        const content = stripLeadingOrder(raw).trim();
+                        let label = String(h1Count.current + 1);
+                        if (/^(标题候选)/.test(content)) label = "1";
+                        else if (/^(内容大纲)/.test(content)) label = "2";
+                        else if (/^(正文)/.test(content)) label = "3";
+                        else if (/^(结尾总结|结尾总结或行动建议|行动建议|结语)/.test(content)) label = "4";
+                        const num = parseInt(label, 10);
+                        if (!Number.isNaN(num)) {
+                          currentSection.current = num;
+                        }
+                        return <h5 {...props}>{props.children}</h5>;
+                      },
+                      h6: (props) => {
+                        const raw = toPlainText(props.children);
+                        const content = stripLeadingOrder(raw).trim();
+                        let label = String(h1Count.current + 1);
+                        if (/^(标题候选)/.test(content)) label = "1";
+                        else if (/^(内容大纲)/.test(content)) label = "2";
+                        else if (/^(正文)/.test(content)) label = "3";
+                        else if (/^(结尾总结|结尾总结或行动建议|行动建议|结语)/.test(content)) label = "4";
+                        const num = parseInt(label, 10);
+                        if (!Number.isNaN(num)) {
+                          currentSection.current = num;
+                        }
+                        return <h6 {...props}>{props.children}</h6>;
                       },
                       ol: (props) => (
                         <ol
