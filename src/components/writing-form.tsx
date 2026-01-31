@@ -669,6 +669,20 @@ export function WritingForm({
             }
             if (meta && meta.source === "local_fallback_stream") {
               fallbackStreamHit = true;
+              if (content) {
+                if (!firstChunkReceived) {
+                  setIsLoading(false);
+                  firstChunkReceived = true;
+                }
+                let endText = normalizeTitleCandidates(content, formData.keyword, formData.language);
+                endText = normalizeOutline(endText);
+                endText = normalizeTopSections(endText);
+                endText = dedupeTopSections(endText);
+                endText = stripDuplicateStructures(endText);
+                endText = enforceFallbackShape(endText);
+                setOutput(endText);
+                lastChunkAt = Date.now();
+              }
             } else if (content) {
               fullText += content;
               if (!firstChunkReceived) {
@@ -698,6 +712,20 @@ export function WritingForm({
             const meta = (json as { meta?: { source?: string } }).meta;
             if (meta && meta.source === "local_fallback_stream") {
               fallbackStreamHit = true;
+              if (content) {
+                if (!firstChunkReceived) {
+                  setIsLoading(false);
+                  firstChunkReceived = true;
+                }
+                let endText = normalizeTitleCandidates(content, formData.keyword, formData.language);
+                endText = normalizeOutline(endText);
+                endText = normalizeTopSections(endText);
+                endText = dedupeTopSections(endText);
+                endText = stripDuplicateStructures(endText);
+                endText = enforceFallbackShape(endText);
+                setOutput(endText);
+                lastChunkAt = Date.now();
+              }
             } else if (content) {
               fullText += content;
               if (!firstChunkReceived) {
@@ -748,7 +776,9 @@ export function WritingForm({
               }
             }
           }
-        } catch {}
+        } catch {
+          setIsLoading(false);
+        }
       }
 
       // Auto-completion detection
@@ -1072,7 +1102,6 @@ export function WritingForm({
           const hasCandidates = /(标题候选|Title Candidates|タイトル候補)/.test(finalText);
           const hasOutline = /(内容大纲|Outline|アウトライン)/.test(finalText);
           const hasBody = /(正文|Body|本文)/.test(finalText);
-          const hasConclusion = /(结尾总结|行动建议|Conclusion|結論|结语)/.test(finalText);
           let prefix = "";
           if (!hasCandidates) prefix += `${addCandidates}\n`;
           if (!hasOutline) prefix += `${addOutline}\n`;
@@ -1272,6 +1301,7 @@ export function WritingForm({
       let firstChunkReceived = false;
       let showedFallbackNotice = false;
       let fallbackStreamHit = false;
+      let didFallback = false;
 
       if (!reader) {
         throw new Error("无法读取响应流");
@@ -1308,6 +1338,7 @@ export function WritingForm({
               }
             if (meta && meta.source === "local_fallback_stream") {
               fallbackStreamHit = true;
+              didFallback = true;
             } else if (obj.content) {
                 newText += obj.content;
                 if (!firstChunkReceived) {
@@ -1334,6 +1365,7 @@ export function WritingForm({
               const obj = raw as { content?: string; meta?: { source?: string; failureType?: string } };
               if (obj.meta && obj.meta.source === "local_fallback_stream") {
                 fallbackStreamHit = true;
+                didFallback = true;
               } else if (obj.content) {
                 newText += obj.content;
               if (!firstChunkReceived) {
@@ -1436,7 +1468,9 @@ export function WritingForm({
         } catch (e) {
           console.error("Failed to persist continue content:", e);
         }
-        toast.success("续写成功！");
+        if (!fallbackStreamHit && !didFallback) {
+          toast.success("续写成功！");
+        }
       } else {
         throw new Error("未返回有效内容");
       }
